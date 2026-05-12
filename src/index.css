@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Cinzel", Georgia, serif;
+  --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --color-gold: #FFD700;
+  --color-purple: #7c3aed;
+}
+
+:root {
+  --glass: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 215, 0, 0.15);
+  --gold-glow: 0 0 40px rgba(124, 58, 237, 0.2);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #0a0a0f;
+  color: #ffffff;
+  margin: 0;
+  background-attachment: fixed;
+}
+
+.hero-gradient {
+  background: radial-gradient(circle at 50% -20%, rgba(124, 58, 237, 0.15) 0%, transparent 70%);
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+.glass-card {
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+  border-color: var(--color-gold);
+  box-shadow: var(--gold-glow);
+  transform: translateY(-4px);
+}
+
+.nav-link {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.5);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.nav-link:hover, .nav-link.active {
+  color: #FFD700;
+  border-bottom: 1px solid #FFD700;
+}
+
+.category-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 4px 12px;
+  border-radius: 100px;
+  background: rgba(124, 58, 237, 0.2);
+  color: #a78bfa;
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  display: inline-block;
+}
+
+.btn-gold {
+  @apply bg-[#FFD700] text-black font-bold py-3 px-8 transition-all duration-300 transform active:scale-95;
+  border-radius: 2px;
+}
+
+.btn-gold:hover {
+  @apply bg-white;
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+}
+
+.btn-category-enter {
+  @apply w-full py-3 border border-[#FFD700]/40 text-[#FFD700] text-[10px] uppercase tracking-[2px] rounded-sm transition-colors;
+}
+
+.btn-category-enter:hover {
+  @apply bg-[#FFD700] text-[#0a0a0f];
+}
+
+.fade-in {
+  animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.gold-text {
+  color: #FFD700;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0f;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 215, 0, 0.2);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-gold);
+}
+
