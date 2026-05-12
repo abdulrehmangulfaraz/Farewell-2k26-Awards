@@ -1,4 +1,5 @@
 import './index.css';
+import { supabase } from './lib/supabase';
 
 // --- TYPES ---
 interface Category {
@@ -19,8 +20,10 @@ interface Nominee {
 }
 
 interface Vote {
+  id?: string;
   nomineeId: string;
   categoryId: string;
+  voterId: string;
   votedAt: number;
 }
 
@@ -32,21 +35,95 @@ interface State {
   adminLoggedIn: boolean;
 }
 
+const generateId = () => Math.random().toString(36).substr(2, 9);
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return generateId() + '-' + generateId();
+};
+
+const getVoterId = () => {
+  let id = localStorage.getItem('voterId');
+  if (!id) {
+    id = generateUUID();
+    localStorage.setItem('voterId', id);
+  }
+  return id;
+};
+
+const VOTER_ID = getVoterId();
+
 // --- STATE MANAGEMENT ---
 const INITIAL_STATE: State = {
-  categories: JSON.parse(localStorage.getItem('categories') || '[]'),
-  nominees: JSON.parse(localStorage.getItem('nominees') || '[]'),
-  votes: JSON.parse(localStorage.getItem('votes') || '[]'),
+  categories: [],
+  nominees: [],
+  votes: [],
   userVotes: JSON.parse(localStorage.getItem('userVotes') || '{}'),
   adminLoggedIn: localStorage.getItem('adminLoggedIn') === 'true'
 };
 
-const saveState = () => {
-  localStorage.setItem('categories', JSON.stringify(INITIAL_STATE.categories));
-  localStorage.setItem('nominees', JSON.stringify(INITIAL_STATE.nominees));
-  localStorage.setItem('votes', JSON.stringify(INITIAL_STATE.votes));
+const saveStateLocal = () => {
   localStorage.setItem('userVotes', JSON.stringify(INITIAL_STATE.userVotes));
   localStorage.setItem('adminLoggedIn', String(INITIAL_STATE.adminLoggedIn));
+};
+
+let isLoadingSupabase = true;
+
+export const loadDataFromSupabase = async () => {
+  if (!supabase) return;
+  isLoadingSupabase = true;
+  
+  try {
+    const [catRes, nomRes, voteRes] = await Promise.all([
+      supabase.from('categories').select('*').order('created_at', { ascending: true }),
+      supabase.from('nominees').select('*').order('created_at', { ascending: true }),
+      supabase.from('votes').select('*')
+    ]);
+
+    if (!catRes.error) {
+      INITIAL_STATE.categories = catRes.data.map(c => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        description: c.description || '',
+        emoji: c.emoji || '🏆',
+        isOpen: c.is_open
+      }));
+    }
+
+    if (!nomRes.error) {
+      INITIAL_STATE.nominees = nomRes.data.map(n => ({
+        id: n.id,
+        categoryId: n.category_id,
+        name: n.name,
+        photoUrl: n.photo_url,
+        tagline: n.tagline
+      }));
+    }
+
+    if (!voteRes.error) {
+      INITIAL_STATE.votes = voteRes.data.map(v => ({
+        id: v.id,
+        nomineeId: v.nominee_id,
+        categoryId: v.category_id,
+        voterId: v.voter_id,
+        votedAt: new Date(v.voted_at).getTime()
+      }));
+      
+      // Update local userVotes based on remote
+      const myVotes = voteRes.data.filter(v => v.voter_id === VOTER_ID);
+      myVotes.forEach(v => {
+        INITIAL_STATE.userVotes[v.category_id] = v.nominee_id;
+      });
+      saveStateLocal();
+    }
+  } catch (err) {
+    console.error('Error fetching from Supabase', err);
+  } finally {
+    isLoadingSupabase = false;
+    routes(); // Re-render once loaded
+  }
 };
 
 // --- UTILS ---
@@ -59,11 +136,22 @@ const render = (html: string) => {
   }
 };
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+
 const slugify = (text: string) => text.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
 
 // --- ROUTER ---
 const routes = () => {
+  if (isLoadingSupabase) {
+    return render(`
+      <main class="flex-1 flex flex-col justify-center items-center text-center px-12 pt-20 pb-32">
+        <div class="glass-card p-10 flex flex-col items-center">
+          <h2 class="text-2xl text-gold mb-2 font-display">Loading Data...</h2>
+          <p class="text-white/50 text-sm">Connecting to Supabase.</p>
+        </div>
+      </main>
+    `);
+  }
+
   const hash = window.location.hash || '#/';
   
   // Public Routes
@@ -511,7 +599,7 @@ const handleLogin = (e: Event) => {
   const passwordInput = $('password') as HTMLInputElement;
   if (passwordInput.value === 'cs22farewell') {
     INITIAL_STATE.adminLoggedIn = true;
-    saveState();
+    saveStateLocal();
     window.location.hash = '#/admin/dashboard';
   } else {
     alert('Invalid Access Key. Access Denied.');
@@ -520,7 +608,7 @@ const handleLogin = (e: Event) => {
 
 const logoutAdmin = () => {
   INITIAL_STATE.adminLoggedIn = false;
-  saveState();
+  saveStateLocal();
   window.location.hash = '#/';
 };
 
@@ -540,7 +628,7 @@ const hideCategoryModal = () => {
   if (modal) modal.classList.add('hidden');
 };
 
-const handleCategoryAction = (e: Event) => {
+const handleCategoryAction = async (e: Event) => {
   e.preventDefault();
   const idInput = $('edit-cat-id') as HTMLInputElement;
   const nameInput = $('cat-name') as HTMLInputElement;
@@ -551,40 +639,51 @@ const handleCategoryAction = (e: Event) => {
   const name = nameInput.value;
   const emoji = emojiInput.value || '🏆';
   const description = descInput.value;
+  const slug = slugify(name);
   
-  if (id) {
-    // Edit logic if needed
-  } else {
-    INITIAL_STATE.categories.push({
-      id: generateId(),
-      name,
-      slug: slugify(name),
-      description,
-      emoji,
-      isOpen: true
-    });
+  const submitBtn = (e.target as HTMLFormElement).querySelector('[type="submit"]') as HTMLButtonElement;
+  const originalText = submitBtn.innerText;
+  submitBtn.innerText = 'Saving...';
+  submitBtn.disabled = true;
+
+  try {
+    if (id) {
+       // edit
+       if (supabase) {
+         await supabase.from('categories').update({ name, slug, description, emoji }).eq('id', id);
+       }
+    } else {
+       const newId = generateUUID();
+       if (supabase) {
+         await supabase.from('categories').insert({
+           id: newId, name, slug, description, emoji, is_open: true
+         });
+       }
+    }
+    await loadDataFromSupabase();
+    hideCategoryModal();
+  } catch (err) {
+    console.error(err);
+    alert('Failed to save category');
+  } finally {
+    submitBtn.innerText = originalText;
+    submitBtn.disabled = false;
   }
-  
-  saveState();
-  hideCategoryModal();
-  renderAdminDashboard();
 };
 
-const deleteCategory = (id: string) => {
+const deleteCategory = async (id: string) => {
   if (confirm('Delete this category and all its nominees/votes? This cannot be undone.')) {
-    INITIAL_STATE.categories = INITIAL_STATE.categories.filter(c => c.id !== id);
-    INITIAL_STATE.nominees = INITIAL_STATE.nominees.filter(n => n.categoryId !== id);
-    INITIAL_STATE.votes = INITIAL_STATE.votes.filter(v => v.categoryId !== id);
-    saveState();
-    renderAdminDashboard();
+    if (supabase) await supabase.from('categories').delete().eq('id', id);
+    await loadDataFromSupabase();
   }
 };
 
-const toggleCategoryStatus = (id: string) => {
+const toggleCategoryStatus = async (id: string) => {
   const cat = INITIAL_STATE.categories.find(c => c.id === id);
-  if (cat) cat.isOpen = !cat.isOpen;
-  saveState();
-  renderAdminDashboard();
+  if (cat) {
+    if (supabase) await supabase.from('categories').update({ is_open: !cat.isOpen }).eq('id', id);
+    await loadDataFromSupabase();
+  }
 };
 
 const copyVoteLink = (slug: string) => {
@@ -594,30 +693,43 @@ const copyVoteLink = (slug: string) => {
   });
 };
 
-const handleNomineeAdd = (e: Event, catId: string) => {
+const handleNomineeAdd = async (e: Event, catId: string) => {
   e.preventDefault();
   const nameInput = $('nom-name') as HTMLInputElement;
   const photoInput = $('nom-photo') as HTMLInputElement;
   const taglineInput = $('nom-tagline') as HTMLInputElement;
   
-  INITIAL_STATE.nominees.push({
-    id: generateId(),
-    categoryId: catId,
-    name: nameInput.value,
-    photoUrl: photoInput.value,
-    tagline: taglineInput.value
-  });
-  
-  saveState();
-  renderAdminNominees(catId);
+  const submitBtn = (e.target as HTMLFormElement).querySelector('[type="submit"]') as HTMLButtonElement;
+  const originalText = submitBtn.innerText;
+  submitBtn.innerText = 'Adding...';
+  submitBtn.disabled = true;
+
+  try {
+    if (supabase) {
+      await supabase.from('nominees').insert({
+        id: generateUUID(),
+        category_id: catId,
+        name: nameInput.value,
+        photo_url: photoInput.value,
+        tagline: taglineInput.value
+      });
+    }
+    await loadDataFromSupabase();
+    renderAdminNominees(catId);
+  } catch(err) {
+    console.error(err);
+    alert('Failed to add nominee');
+  } finally {
+    submitBtn.innerText = originalText;
+    submitBtn.disabled = false;
+  }
 };
 
-const deleteNominee = (id: string) => {
+const deleteNominee = async (id: string) => {
   if (confirm('Remove this nominee?')) {
     const nom = INITIAL_STATE.nominees.find(n => n.id === id);
-    INITIAL_STATE.nominees = INITIAL_STATE.nominees.filter(n => n.id !== id);
-    INITIAL_STATE.votes = INITIAL_STATE.votes.filter(v => v.nomineeId !== id);
-    saveState();
+    if (supabase) await supabase.from('nominees').delete().eq('id', id);
+    await loadDataFromSupabase();
     if (nom) renderAdminNominees(nom.categoryId);
   }
 };
@@ -637,30 +749,59 @@ const selectNominee = (id: string) => {
   $('vote-footer')?.classList.remove('translate-y-full');
 };
 
-const castVote = (catId: string) => {
+const castVote = async (catId: string) => {
   if (!selectedNomineeId) return;
   
-  INITIAL_STATE.votes.push({
-    nomineeId: selectedNomineeId,
-    categoryId: catId,
-    votedAt: Date.now()
-  });
+  const btn = $('cast-vote-btn') as HTMLButtonElement;
+  if (btn) {
+    btn.innerText = 'PROCESSING...';
+    btn.disabled = true;
+  }
   
-  INITIAL_STATE.userVotes[catId] = selectedNomineeId;
-  saveState();
-  
-  // Confetti!
-  (window as any).confetti({
-    particleCount: 150,
-    spread: 70,
-    origin: { y: 0.6 },
-    colors: ['#FFD700', '#7c3aed', '#ffffff']
-  });
-  
-  setTimeout(() => {
-    const cat = INITIAL_STATE.categories.find(c => c.id === catId);
-    renderVotePage(cat?.slug || '');
-  }, 500);
+  try {
+    if (supabase) {
+       const { error } = await supabase.from('votes').insert({
+         category_id: catId,
+         nominee_id: selectedNomineeId,
+         voter_id: VOTER_ID
+       });
+       
+       if (error) {
+         if (error.code === '23505') {
+            alert('You have already voted in this category!');
+         } else {
+            alert('Failed to cast vote. Try again.');
+         }
+         return;
+       }
+    }
+    
+    // Update local immediately for snappy UI
+    INITIAL_STATE.userVotes[catId] = selectedNomineeId;
+    saveStateLocal();
+    await loadDataFromSupabase();
+    
+    // Confetti!
+    (window as any).confetti({
+      particleCount: 150,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ['#FFD700', '#7c3aed', '#ffffff']
+    });
+    
+    setTimeout(() => {
+      const cat = INITIAL_STATE.categories.find(c => c.id === catId);
+      renderVotePage(cat?.slug || '');
+    }, 500);
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+     if (btn) {
+      btn.innerText = 'CAST YOUR VOTE';
+      btn.disabled = false;
+    }
+  }
 };
 
 const exportResultsCSV = () => {
@@ -693,4 +834,6 @@ Object.assign(window, {
 });
 
 // --- START APP ---
-routes();
+loadDataFromSupabase().then(() => {
+  // routes will be called by loadDataFromSupabase
+});
