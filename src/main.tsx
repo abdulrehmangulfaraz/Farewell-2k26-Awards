@@ -597,7 +597,7 @@ function renderAdminResults() {
 const handleLogin = (e: Event) => {
   e.preventDefault();
   const passwordInput = $('password') as HTMLInputElement;
-  if (passwordInput.value === 'cs22farewell') {
+  if (passwordInput.value === '0x68656865') {
     INITIAL_STATE.adminLoggedIn = true;
     saveStateLocal();
     window.location.hash = '#/admin/dashboard';
